@@ -414,4 +414,41 @@ app.patch("/interests/:id", async (req, res) => {
       res.status(500).send({ message: "Failed to update interest status" });
     }
   });
-  
+   app.delete("/interest/:id", async (req, res) => {
+    try {
+      const id = req.params.id;
+      const email = req.query.email;
+
+      if (!email)
+        return res
+          .status(400)
+          .send({ message: "Email missing (authorization)" });
+
+      if (!ObjectId.isValid(id))
+        return res.status(400).send({ message: "Invalid ID" });
+
+      const doc = await interestCollection.findOne({
+        _id: new ObjectId(id),
+      });
+      if (!doc)
+        return res.status(404).send({ message: "Interest not found" });
+
+      if (doc.buyerEmail !== email)
+        return res.status(403).send({
+          message: "Unauthorized — only buyer can delete",
+        });
+
+      await interestCollection.deleteOne({ _id: new ObjectId(id) });
+
+      await cropsCollection.updateOne(
+        { "interests._id": new ObjectId(id) },
+        { $pull: { interests: { _id: new ObjectId(id) } } }
+      );
+
+      res.send({ success: true });
+    } catch (err) {
+      console.error("DELETE /interest/:id error:", err);
+      res.status(500).send({ message: "Failed to delete interest" });
+    }
+  });
+}
