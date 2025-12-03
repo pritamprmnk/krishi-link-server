@@ -10,10 +10,13 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "cloudinary": "^2.8.0",
     "cors": "^2.8.5",
     "dotenv": "^17.2.3",
-    "express": "^5.1.0",
+    "express": "^5.2.1",
     "mongodb": "^7.0.0",
-    "multer": "^2.0.2"
+    "multer": "^2.0.2",
+    "serverless-http": "^4.0.0",
+    "streamifier": "^0.1.1"
   }
 }

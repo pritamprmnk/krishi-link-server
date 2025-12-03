@@ -1,461 +1,327 @@
+// server.js — Optimized Express + MongoDB backend (Base64 Image Compatible)
+
 const express = require("express");
 const cors = require("cors");
-const multer = require("multer");
-const fs = require("fs");
-const path = require("path");
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
-require("dotenv").config()
+require("dotenv").config();
 
 const app = express();
 const port = process.env.PORT || 3000;
 
 app.use(cors());
-app.use(express.json());
-app.use("/uploads", express.static("uploads"));
+app.use(express.json({ limit: "20mb" })); // high limit for base64 images
 
-/* -------------------- MULTER CONFIG -------------------- */
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, "uploads/"),
-  filename: (req, file, cb) =>
-    cb(null, Date.now() + path.extname(file.originalname)),
-});
+// -------------------- DATABASE CONNECTION --------------------
+const uri = `mongodb+srv://${process.env.DB_USERNAME}:${process.env.DB_PASSWORD}@cluster0.iovcwwa.mongodb.net/?retryWrites=true&w=majority`;
 
-const upload = multer({
-  storage,
-  fileFilter(req, file, cb) {
-    const allowed = ["image/png", "image/jpeg", "image/jpg"];
-    allowed.includes(file.mimetype)
-      ? cb(null, true)
-      : cb(new Error("Only JPG & PNG allowed"));
-  },
-});
+const client = new MongoClient(uri, { serverApi: ServerApiVersion.v1 });
 
-/* -------------------- DATABASE CONNECTION -------------------- */
-const uri =
-  `mongodb+srv://${process.env.DB_USERNAME}:${process.env.DB_PASSWORD}@cluster0.iovcwwa.mongodb.net/?appName=Cluster0`;
+const toOID = (id) => (ObjectId.isValid(id) ? new ObjectId(id) : null);
 
-const client = new MongoClient(uri, {
-  serverApi: {
-    version: ServerApiVersion.v1,
-    strict: true,
-    deprecationErrors: true,
-  },
-});
-
-/* -------------------- MAIN RUN FUNCTION -------------------- */
+// -------------------- MAIN RUN --------------------
 async function run() {
-  await client.connect();
-  console.log("MongoDB Connected ✔");
+  try {
+    await client.connect();
+    console.log("🌿 MongoDB Connected");
 
-  const db = client.db("a10krishilink");
-  const cropsCollection = db.collection("allcrops");
-  const interestCollection = db.collection("interests");
+    const db = client.db("a10krishilink");
+    const cropsCollection = db.collection("allcrops");
+    const interestCollection = db.collection("interests");
 
-  /* ---------------------- CROPS API ---------------------- */
+    // -------------------- CROPS --------------------
 
-  app.get("/allcrops", async (req, res) => {
-    try {
-      const crops = await cropsCollection
-        .find()
-        .sort({ createdAt: -1 })
-        .toArray();
-      res.send(crops);
-    } catch (err) {
-      console.error("GET /allcrops error:", err);
-      res.status(500).send({ message: "Failed to fetch crops" });
-    }
-  });
+    // Get all crops
+    app.get("/allcrops", async (_req, res) => {
+      try {
+        const crops = await cropsCollection.find().sort({ createdAt: -1 }).toArray();
+        res.send(crops);
+      } catch {
+        res.status(500).send({ error: "Failed to fetch crops" });
+      }
+    });
 
-  app.get("/allcrops/:id", async (req, res) => {
-    try {
-      const id = req.params.id;
-      if (!ObjectId.isValid(id))
-        return res.status(400).send({ message: "Invalid ID" });
+    // Get single crop
+    app.get("/allcrops/:id", async (req, res) => {
+      const oid = toOID(req.params.id);
+      if (!oid) return res.status(400).send({ error: "Invalid crop ID" });
 
-      const crop = await cropsCollection.findOne({ _id: new ObjectId(id) });
-      if (!crop) return res.status(404).send({ message: "Crop not found" });
+      const crop = await cropsCollection.findOne({ _id: oid });
+      if (!crop) return res.status(404).send({ error: "Crop not found" });
 
       res.send(crop);
-    } catch (err) {
-      console.error("GET /allcrops/:id error:", err);
-      res.status(500).send({ message: "Failed to load crop detail" });
-    }
-  });
+    });
 
-  app.get("/mycrops/:email", async (req, res) => {
-    try {
-      const email = req.params.email;
-      const crops = await cropsCollection
-        .find({ userEmail: email })
-        .sort({ createdAt: -1 })
-        .toArray();
-      res.send(crops);
-    } catch (err) {
-      console.error("GET /mycrops/:email error:", err);
-      res.status(500).send({ message: "Failed to fetch user crops" });
-    }
-  });
+    // User crops
+    app.get("/mycrops/:email", async (req, res) => {
+      try {
+        const crops = await cropsCollection
+          .find({ userEmail: req.params.email })
+          .sort({ createdAt: -1 })
+          .toArray();
 
-  app.get("/myinterests/:email", async (req, res) => {
-    try {
-      const email = req.params.email;
-      const interests = await interestCollection
-        .find({ buyerEmail: email })
-        .sort({ createdAt: -1 })
-        .toArray();
-
-      const result = interests.map((i) => ({
-        _id: i._id,
-        cropId: i.cropId,
-        cropName: i.cropName,
-        sellerEmail: i.sellerEmail,
-        quantity: i.quantity,
-        message: i.message,
-        status: i.status,
-        date: i.createdAt ? i.createdAt.toISOString().split("T")[0] : null,
-      }));
-
-      res.send(result);
-    } catch (err) {
-      console.error("GET /myinterests/:email error:", err);
-      res.status(500).send({ message: "Failed to fetch my interests" });
-    }
-  });
-
-  app.post("/allcrops", upload.single("image"), async (req, res) => {
-    try {
-      if (!req.file)
-        return res.status(400).send({ message: "Image required" });
-
-      const cropData = {
-        name: req.body.name,
-        type: req.body.type,
-        pricePerUnit: Number(req.body.pricePerUnit),
-        unit: req.body.unit,
-        quantity: Number(req.body.quantity),
-        description: req.body.description,
-        location: req.body.location,
-        image: req.file.filename,
-        userEmail: req.body.userEmail,
-        userName: req.body.userName,
-        userPhoto: req.body.userPhoto || "",
-        interests: [],
-        createdAt: new Date(),
-      };
-
-      const result = await cropsCollection.insertOne(cropData);
-      cropData._id = result.insertedId;
-
-      res.send({ success: true, data: cropData });
-    } catch (error) {
-      console.error("POST /allcrops error:", error);
-      res.status(500).send({ message: "Failed to add crop" });
-    }
-  });
-
-  app.put("/allcrops/:id", upload.single("image"), async (req, res) => {
-    try {
-      const id = req.params.id;
-      if (!ObjectId.isValid(id))
-        return res.status(400).send({ message: "Invalid ID" });
-
-      const existing = await cropsCollection.findOne({
-        _id: new ObjectId(id),
-      });
-      if (!existing) return res.status(404).send({ message: "Crop not found" });
-
-      if (existing.userEmail !== req.body.userEmail)
-        return res.status(403).send({ message: "Unauthorized" });
-
-      let imageName = existing.image;
-      if (req.file) {
-        imageName = req.file.filename;
-        const oldPath = path.join("uploads", existing.image);
-        if (fs.existsSync(oldPath)) fs.unlinkSync(oldPath);
+        res.send(crops);
+      } catch {
+        res.status(500).send({ error: "Failed to fetch user crops" });
       }
+    });
 
-      const updateDoc = {
-        $set: {
-          name: req.body.name,
-          type: req.body.type,
-          pricePerUnit: Number(req.body.pricePerUnit),
-          unit: req.body.unit,
-          quantity: Number(req.body.quantity),
-          description: req.body.description,
-          location: req.body.location,
-          image: imageName,
-          updatedAt: new Date(),
-        },
-      };
+    // -------------------- ADD CROP --------------------
+    app.post("/allcrops", async (req, res) => {
+      try {
+        const data = req.body;
 
-      await cropsCollection.updateOne({ _id: new ObjectId(id) }, updateDoc);
-      res.send({ success: true });
-    } catch (err) {
-      console.error("PUT /allcrops/:id error:", err);
-      res.status(500).send({ message: "Failed to update crop" });
-    }
-  });
+        if (!data.image) return res.status(400).send({ error: "Image required" });
+        if (!data.userEmail) return res.status(400).send({ error: "User email required" });
 
-  app.delete("/allcrops/:id", async (req, res) => {
-    try {
-      const id = req.params.id;
-      const email = req.query.email;
+        const crop = {
+          name: data.name,
+          type: data.type,
+          pricePerUnit: Number(data.pricePerUnit) || 0,
+          unit: data.unit,
+          quantity: Number(data.quantity) || 0,
+          description: data.description,
+          location: data.location,
+          image: data.image, // Base64
+          userEmail: data.userEmail,
+          userName: data.userName || "",
+          userPhoto: data.userPhoto || "",
+          interests: [],
+          createdAt: new Date(),
+        };
 
-      if (!email)
-        return res.status(400).send({ message: "Email missing" });
+        const result = await cropsCollection.insertOne(crop);
+        crop._id = result.insertedId;
 
-      if (!ObjectId.isValid(id))
-        return res.status(400).send({ message: "Invalid ID" });
-
-      const crop = await cropsCollection.findOne({ _id: new ObjectId(id) });
-      if (!crop) return res.status(404).send({ message: "Crop not found" });
-
-      if (crop.userEmail !== email)
-        return res.status(403).send({ message: "Unauthorized" });
-
-      const imgPath = path.join("uploads", crop.image);
-      if (fs.existsSync(imgPath)) fs.unlinkSync(imgPath);
-
-      await cropsCollection.deleteOne({ _id: new ObjectId(id) });
-
-      res.send({ success: true });
-    } catch (err) {
-      console.error("DELETE /allcrops/:id error:", err);
-      res.status(500).send({ message: "Delete failed" });
-    }
-  });
-
-  /* ---------------------- INTEREST API ---------------------- */
-
-  app.post("/interest", async (req, res) => {
-    try {
-      const { cropId, userEmail, userName, quantity, message } = req.body;
-
-      if (!cropId || !ObjectId.isValid(cropId))
-        return res
-          .status(400)
-          .send({ message: "Invalid or missing cropId" });
-
-      if (!userEmail || typeof userEmail !== "string")
-        return res.status(400).send({ message: "Missing userEmail" });
-
-      const qtyNum = Number(quantity);
-      if (!qtyNum || qtyNum < 1)
-        return res.status(400).send({ message: "Quantity must be >= 1" });
-
-      const crop = await cropsCollection.findOne({
-        _id: new ObjectId(cropId),
-      });
-      if (!crop) return res.status(404).send({ message: "Crop not found" });
-
-      if (crop.userEmail === userEmail)
-        return res
-          .status(403)
-          .send({ message: "Owner cannot send interest" });
-
-      if (typeof crop.quantity === "number" && qtyNum > crop.quantity)
-        return res
-          .status(400)
-          .send({ message: `Requested quantity exceeds available (${crop.quantity})` });
-
-      const already = crop.interests?.some(
-        (i) => i.userEmail === userEmail
-      );
-      if (already)
-        return res
-          .status(400)
-          .send({ message: "Already sent interest" });
-
-      const interestId = new ObjectId();
-      const newInterest = {
-        _id: interestId,
-        cropId,
-        cropName: crop.name,
-        userEmail,
-        userName,
-        quantity: qtyNum,
-        message,
-        status: "pending",
-        createdAt: new Date(),
-      };
-
-      await cropsCollection.updateOne(
-        { _id: new ObjectId(cropId) },
-        { $push: { interests: newInterest } }
-      );
-
-      await interestCollection.insertOne({
-        _id: interestId,
-        cropId,
-        cropName: crop.name,
-        sellerEmail: crop.userEmail,
-        buyerEmail: userEmail,
-        userName,
-        quantity: qtyNum,
-        message,
-        status: "pending",
-        createdAt: new Date(),
-      });
-
-      res.send({ success: true, data: newInterest });
-    } catch (err) {
-      console.error("POST /interest error:", err);
-      res.status(500).send({ message: "Failed to add interest" });
-    }
-  });
-
-  app.get("/interest/:email", async (req, res) => {
-    try {
-      const email = req.params.email;
-      const crops = await cropsCollection.find({ userEmail: email }).toArray();
-
-      let all = [];
-      for (const crop of crops) {
-        if (Array.isArray(crop.interests)) {
-          crop.interests.forEach((i) =>
-            all.push({
-              ...i,
-              cropId: crop._id,
-              cropName: crop.name,
-              sellerEmail: crop.userEmail,
-              cropImage: crop.image || null,
-            })
-          );
-        }
+        res.send({ success: true, data: crop });
+      } catch (err) {
+        console.error("Add Crop Error:", err);
+        res.status(500).send({ error: "Failed to add crop" });
       }
+    });
 
-      all.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-      res.send(all);
-    } catch (err) {
-      console.error("GET /interest/:email error:", err);
-      res.status(500).send({ message: "Failed to fetch interests" });
-    }
-  });
+    // -------------------- UPDATE CROP --------------------
+    app.put("/allcrops/:id", async (req, res) => {
+      try {
+        const oid = toOID(req.params.id);
+        if (!oid) return res.status(400).send({ error: "Invalid ID" });
 
-  app.get("/myInterests/:email", async (req, res) => {
-    try {
-      const email = req.params.email;
+        const existing = await cropsCollection.findOne({ _id: oid });
+        if (!existing) return res.status(404).send({ error: "Crop not found" });
 
-      const interests = await interestCollection
-        .find({ buyerEmail: email })
-        .sort({ createdAt: -1 })
-        .toArray();
+        if (existing.userEmail !== req.body.userEmail)
+          return res.status(403).send({ error: "Unauthorized" });
 
-      const result = interests.map((i) => ({
-        _id: i._id,
-        cropId: i.cropId,
-        cropName: i.cropName,
-        sellerEmail: i.sellerEmail,
-        quantity: i.quantity,
-        message: i.message,
-        status: i.status,
-        date: i.createdAt ? i.createdAt.toISOString().split("T")[0] : null,
-      }));
+        const body = req.body;
 
-      res.send(result);
-    } catch (err) {
-      console.error("GET /myInterests/:email error:", err);
-      res.status(500).send({ message: "Failed to fetch my interests" });
-    }
-  });
+        await cropsCollection.updateOne(
+          { _id: oid },
+          {
+            $set: {
+              name: body.name,
+              type: body.type,
+              description: body.description,
+              location: body.location,
+              pricePerUnit: Number(body.pricePerUnit),
+              quantity: Number(body.quantity),
+              unit: body.unit,
+              image: body.image || existing.image,
+              updatedAt: new Date(),
+            },
+          }
+        );
 
-app.patch("/interests/:id", async (req, res) => {
-    try {
-      const interestId = req.params.id;
-      const { status } = req.body;
-
-      if (!ObjectId.isValid(interestId))
-        return res.status(400).send({ message: "Invalid interest id" });
-
-      if (!["pending", "accepted", "rejected"].includes(status))
-        return res.status(400).send({ message: "Invalid status" });
-
-      const existingInterest = await interestCollection.findOne({
-        _id: new ObjectId(interestId),
-      });
-      if (!existingInterest)
-        return res.status(404).send({ message: "Interest not found" });
-
-      const cropId = existingInterest.cropId;
-      if (!ObjectId.isValid(cropId))
-        return res.status(400).send({ message: "Invalid crop id" });
-
-      const crop = await cropsCollection.findOne({ _id: new ObjectId(cropId) });
-      if (!crop) return res.status(404).send({ message: "Crop not found" });
-
-      await interestCollection.updateOne(
-        { _id: new ObjectId(interestId) },
-        { $set: { status: status, updatedAt: new Date() } }
-      );
-
-      await cropsCollection.updateOne(
-        { _id: new ObjectId(cropId), "interests._id": new ObjectId(interestId) },
-        { $set: { "interests.$.status": status, "interests.$.updatedAt": new Date() } }
-      );
-
-      if (status === "accepted") {
-        const qtyToReduce = Number(existingInterest.quantity || 0);
-        if (qtyToReduce > 0) {
-          const newQty = Math.max(0, Number(crop.quantity || 0) - qtyToReduce);
-          await cropsCollection.updateOne(
-            { _id: new ObjectId(cropId) },
-            { $set: { quantity: newQty, updatedAt: new Date() } }
-          );
-        }
+        res.send({ success: true });
+      } catch {
+        res.status(500).send({ error: "Failed to update crop" });
       }
+    });
 
-      const updatedInterest = await interestCollection.findOne({
-        _id: new ObjectId(interestId),
-      });
+    // -------------------- DELETE CROP --------------------
+    app.delete("/allcrops/:id", async (req, res) => {
+      try {
+        const oid = toOID(req.params.id);
+        if (!oid) return res.status(400).send({ error: "Invalid ID" });
 
-      res.send({ success: true, interest: updatedInterest });
-    } catch (err) {
-      console.error("PATCH /interests/:id error:", err);
-      res.status(500).send({ message: "Failed to update interest status" });
-    }
-  });
-   app.delete("/interest/:id", async (req, res) => {
-    try {
-      const id = req.params.id;
-      const email = req.query.email;
+        const email = req.query.email;
+        if (!email) return res.status(400).send({ error: "Email missing" });
 
-      if (!email)
-        return res
-          .status(400)
-          .send({ message: "Email missing (authorization)" });
+        const crop = await cropsCollection.findOne({ _id: oid });
+        if (!crop) return res.status(404).send({ error: "Crop not found" });
 
-      if (!ObjectId.isValid(id))
-        return res.status(400).send({ message: "Invalid ID" });
+        if (crop.userEmail !== email) return res.status(403).send({ error: "Unauthorized" });
 
-      const doc = await interestCollection.findOne({
-        _id: new ObjectId(id),
-      });
-      if (!doc)
-        return res.status(404).send({ message: "Interest not found" });
+        await cropsCollection.deleteOne({ _id: oid });
+        await interestCollection.deleteMany({ cropId: req.params.id });
 
-      if (doc.buyerEmail !== email)
-        return res.status(403).send({
-          message: "Unauthorized — only buyer can delete",
+        res.send({ success: true });
+      } catch {
+        res.status(500).send({ error: "Failed to delete crop" });
+      }
+    });
+
+    // -------------------- INTEREST APIs --------------------
+
+    // Add interest
+    app.post("/interest", async (req, res) => {
+      try {
+        const { cropId, userEmail, userName, quantity, message } = req.body;
+
+        if (!cropId || !userEmail)
+          return res.status(400).send({ error: "Required fields missing" });
+
+        const oid = toOID(cropId);
+        if (!oid) return res.status(400).send({ error: "Invalid crop ID" });
+
+        const crop = await cropsCollection.findOne({ _id: oid });
+        if (!crop) return res.status(404).send({ error: "Crop not found" });
+
+        if (crop.userEmail === userEmail)
+          return res.status(403).send({ error: "You cannot show interest on your own crop" });
+
+        const qty = Number(quantity);
+        if (qty < 1) return res.status(400).send({ error: "Quantity must be >= 1" });
+
+        const newInterest = {
+          _id: new ObjectId(),
+          cropId,
+          cropName: crop.name,
+          buyerEmail: userEmail,
+          buyerName: userName,
+          quantity: qty,
+          message,
+          status: "pending",
+          createdAt: new Date(),
+        };
+
+        await cropsCollection.updateOne(
+          { _id: oid },
+          { $push: { interests: newInterest } }
+        );
+
+        await interestCollection.insertOne({
+          ...newInterest,
+          sellerEmail: crop.userEmail,
         });
 
-      await interestCollection.deleteOne({ _id: new ObjectId(id) });
+        res.send({ success: true, data: newInterest });
+      } catch {
+        res.status(500).send({ error: "Failed to add interest" });
+      }
+    });
 
-      await cropsCollection.updateOne(
-        { "interests._id": new ObjectId(id) },
-        { $pull: { interests: { _id: new ObjectId(id) } } }
-      );
+    // Seller interest list
+    app.get("/interest/:email", async (req, res) => {
+      try {
+        const sellerEmail = req.params.email;
 
-      res.send({ success: true });
-    } catch (err) {
-      console.error("DELETE /interest/:id error:", err);
-      res.status(500).send({ message: "Failed to delete interest" });
-    }
-  });
+        const crops = await cropsCollection.find({ userEmail: sellerEmail }).toArray();
+
+        const list = crops.flatMap((crop) =>
+          (crop.interests || []).map((i) => ({
+            ...i,
+            cropId: String(crop._id),
+            cropName: crop.name,
+            cropImage: crop.image,
+            sellerEmail,
+          }))
+        );
+
+        list.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+
+        res.send(list);
+      } catch {
+        res.status(500).send({ error: "Failed to fetch interests" });
+      }
+    });
+
+    // Update interest status
+    app.patch("/interests/:id", async (req, res) => {
+      try {
+        const oid = toOID(req.params.id);
+        if (!oid) return res.status(400).send({ error: "Invalid ID" });
+
+        const { status } = req.body;
+
+        await interestCollection.updateOne(
+          { _id: oid },
+          { $set: { status, updatedAt: new Date() } }
+        );
+
+        await cropsCollection.updateMany(
+          { "interests._id": oid },
+          {
+            $set: {
+              "interests.$.status": status,
+              "interests.$.updatedAt": new Date(),
+            },
+          }
+        );
+
+        res.send({ success: true });
+      } catch {
+        res.status(500).send({ error: "Failed to update interest" });
+      }
+    });
+
+    // Delete interest
+    app.delete("/interest/:id", async (req, res) => {
+      try {
+        const oid = toOID(req.params.id);
+        if (!oid) return res.status(400).send({ error: "Invalid ID" });
+
+        const email = req.query.email;
+        if (!email) return res.status(400).send({ error: "Email required" });
+
+        const interest = await interestCollection.findOne({ _id: oid });
+        if (!interest) return res.status(404).send({ error: "Interest not found" });
+
+        if (interest.buyerEmail !== email)
+          return res.status(403).send({ error: "Unauthorized" });
+
+        await interestCollection.deleteOne({ _id: oid });
+
+        await cropsCollection.updateOne(
+          { "interests._id": oid },
+          { $pull: { interests: { _id: oid } } }
+        );
+
+        res.send({ success: true });
+      } catch {
+        res.status(500).send({ error: "Failed to delete interest" });
+      }
+    });
+
+    // Get buyer interests (My Interests)
+app.get("/myInterests/:email", async (req, res) => {
+  try {
+    const buyerEmail = req.params.email;
+
+    const list = await interestCollection
+      .find({ buyerEmail })
+      .sort({ createdAt: -1 })
+      .toArray();
+
+    res.send(list);
+  } catch (error) {
+    console.error("Error fetching buyer interests:", error);
+    res.status(500).send({ error: "Failed to fetch buyer interests" });
+  }
+});
+
+
+    // Health route
+    app.get("/", (_req, res) => res.send("Server OK ✓"));
+  } catch (err) {
+    console.error("Run Error:", err);
+  }
 }
-run().catch((err) => console.error("RUN failed:", err));
-app.get("/", (req, res) => res.send("Server OK ✓"));
 
-app.listen(port, () =>
-  console.log(`Server running at http://localhost:${port}`)
-);
+run();
 
+// For Vercel serverless compatibility
+module.exports = app;
+
+// Local run
+if (require.main === module) {
+  app.listen(port, () => console.log(`🚀 Server running on port ${port}`));
+}
