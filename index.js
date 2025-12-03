@@ -454,4 +454,10 @@ async function run() {
   });
 }
 
+run().catch((err) => console.error("RUN failed:", err));
+app.get("/", (req, res) => res.send("Server OK ✓"));
+
+app.listen(port, () =>
+  console.log(`Server running at http://localhost:${port}`)
+);
 
