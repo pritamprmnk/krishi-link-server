@@ -359,3 +359,59 @@ async function run() {
     }
   });
 
+app.patch("/interests/:id", async (req, res) => {
+    try {
+      const interestId = req.params.id;
+      const { status } = req.body;
+
+      if (!ObjectId.isValid(interestId))
+        return res.status(400).send({ message: "Invalid interest id" });
+
+      if (!["pending", "accepted", "rejected"].includes(status))
+        return res.status(400).send({ message: "Invalid status" });
+
+      const existingInterest = await interestCollection.findOne({
+        _id: new ObjectId(interestId),
+      });
+      if (!existingInterest)
+        return res.status(404).send({ message: "Interest not found" });
+
+      const cropId = existingInterest.cropId;
+      if (!ObjectId.isValid(cropId))
+        return res.status(400).send({ message: "Invalid crop id" });
+
+      const crop = await cropsCollection.findOne({ _id: new ObjectId(cropId) });
+      if (!crop) return res.status(404).send({ message: "Crop not found" });
+
+      await interestCollection.updateOne(
+        { _id: new ObjectId(interestId) },
+        { $set: { status: status, updatedAt: new Date() } }
+      );
+
+      await cropsCollection.updateOne(
+        { _id: new ObjectId(cropId), "interests._id": new ObjectId(interestId) },
+        { $set: { "interests.$.status": status, "interests.$.updatedAt": new Date() } }
+      );
+
+      if (status === "accepted") {
+        const qtyToReduce = Number(existingInterest.quantity || 0);
+        if (qtyToReduce > 0) {
+          const newQty = Math.max(0, Number(crop.quantity || 0) - qtyToReduce);
+          await cropsCollection.updateOne(
+            { _id: new ObjectId(cropId) },
+            { $set: { quantity: newQty, updatedAt: new Date() } }
+          );
+        }
+      }
+
+      const updatedInterest = await interestCollection.findOne({
+        _id: new ObjectId(interestId),
+      });
+
+      res.send({ success: true, interest: updatedInterest });
+    } catch (err) {
+      console.error("PATCH /interests/:id error:", err);
+      res.status(500).send({ message: "Failed to update interest status" });
+    }
+  });
+  
