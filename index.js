@@ -19,7 +19,7 @@ let db;
 
 async function connectDB() {
   if (!db) {
-    await client.connect();
+    // await client.connect();
     console.log(" MongoDB Connected (once)");
     db = client.db("a10krishilink");
   }
@@ -309,4 +309,5 @@ if (!process.env.VERCEL) {
   );
 }
 
+// module.exports = app;
 module.exports = app;
