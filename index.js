@@ -9,7 +9,6 @@ const port = process.env.PORT || 3000;
 app.use(cors());
 app.use(express.json({ limit: "20mb" }));
 
-// -------------------- DATABASE CONNECTION --------------------
 const uri = `mongodb+srv://${process.env.DB_USERNAME}:${process.env.DB_PASSWORD}@cluster0.iovcwwa.mongodb.net/?retryWrites=true&w=majority`;
 
 const client = new MongoClient(uri, {
@@ -28,14 +27,12 @@ async function connectDB() {
 
 const toOID = (id) => (ObjectId.isValid(id) ? new ObjectId(id) : null);
 
-// -------------------- MAIN RUN --------------------
 async function run() {
   await connectDB();
 
   const cropsCollection = db.collection("allcrops");
   const interestCollection = db.collection("interests");
 
-  // -------------------- CROPS --------------------
   app.get("/allcrops", async (_req, res) => {
     try {
       const crops = await cropsCollection.find().sort({ createdAt: -1 }).toArray();
@@ -68,7 +65,6 @@ async function run() {
     }
   });
 
-  // -------------------- ADD CROP --------------------
   app.post("/allcrops", async (req, res) => {
     try {
       const data = req.body;
@@ -102,7 +98,6 @@ async function run() {
     }
   });
 
-  // -------------------- UPDATE CROP --------------------
   app.put("/allcrops/:id", async (req, res) => {
     try {
       const oid = toOID(req.params.id);
@@ -139,7 +134,6 @@ async function run() {
     }
   });
 
-  // -------------------- DELETE CROP --------------------
   app.delete("/allcrops/:id", async (req, res) => {
     try {
       const oid = toOID(req.params.id);
@@ -162,7 +156,6 @@ async function run() {
     }
   });
 
-  // -------------------- INTEREST APIs --------------------
   app.post("/interest", async (req, res) => {
     try {
       const { cropId, userEmail, userName, quantity, message } = req.body;
@@ -310,7 +303,6 @@ async function run() {
 
 run();
 
-// -------------------- LOCAL ONLY --------------------
 if (!process.env.VERCEL) {
   app.listen(port, () =>
     console.log(`🚀 Local server running on port ${port}`)
